@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.models import Document, Grant, User
 
+KNOWN_ACTIONS = {"read", "edit", "delete", "share"}
 OWNER_ONLY = {"delete", "share"}  # actions only the owner may do
 ALLOWED_PERMISSIONS = {
     "read": {"read", "edit"},  # which grant types allow this action
@@ -14,6 +15,8 @@ ALLOWED_PERMISSIONS = {
 
 def is_allowed(db: Session, user: User, doc: Document | None, action: str) -> bool:
     """Pure yes/no decision. Denies by default."""
+    if action not in KNOWN_ACTIONS:
+        return False
     if doc is None or doc.deleted_at is not None or not user.is_active:
         return False
     if doc.owner_id == user.id:
