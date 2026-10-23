@@ -1,4 +1,5 @@
 import hashlib
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
@@ -32,6 +33,13 @@ def view(doc: Document) -> dict:
         "owner_id": doc.owner_id,
         "created_at": doc.created_at.isoformat(),
     }
+
+
+def like(text: str) -> str:
+    """Make user text safe for LIKE: backslash, % and _ are plain characters."""
+    for ch in ("\\", "%", "_"):
+        text = text.replace(ch, "\\" + ch)
+    return f"%{text}%"
 
 
 def visible_documents(user: User):
@@ -85,10 +93,38 @@ async def upload(
 
 
 @router.get("")
-def list_documents(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    rows = db.execute(visible_documents(user).order_by(Document.created_at.desc())).all()
+def list_documents(
+    q: str | None = Query(default=None, max_length=100),
+    owner: str | None = Query(default=None, max_length=100),
+    category: str | None = Query(default=None, max_length=100),
+    created_from: date | None = None,
+    created_to: date | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    stmt = visible_documents(user)  # the permission filter comes first, always
+    if q:
+        stmt = stmt.where(Document.name.ilike(like(q), escape="\\"))
+    if category:
+        stmt = stmt.where(Document.category.ilike(like(category), escape="\\"))
+    if owner:
+        stmt = stmt.where(Document.owner_id.in_(
+            select(User.id).where(User.email.ilike(like(owner), escape="\\"))))
+    if created_from:
+        start = datetime.combine(created_from, time.min, tzinfo=timezone.utc)
+        stmt = stmt.where(Document.created_at >= start)
+    if created_to:
+        end = datetime.combine(created_to + timedelta(days=1), time.min, tzinfo=timezone.utc)
+        stmt = stmt.where(Document.created_at < end)
+    rows = db.execute(stmt.order_by(Document.created_at.desc())).all()
+    emails = {}
+    if rows:
+        emails = dict(db.execute(
+            select(User.id, User.email).where(User.id.in_({d.owner_id for d, _ in rows}))
+        ).all())
     return [
-        {**view(d), "my_permission": "owner" if d.owner_id == user.id else p}
+        {**view(d), "owner_email": emails.get(d.owner_id),
+         "my_permission": "owner" if d.owner_id == user.id else p}
         for d, p in rows
     ]
 

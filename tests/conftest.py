@@ -14,6 +14,7 @@ import pytest  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 from app import models  # noqa: E402,F401
+from app.audit_protect import install_audit_triggers  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 
 # Safety net: refuse to run against anything that isn't the test database.
@@ -23,6 +24,7 @@ assert engine.url.database == "trustvault_test", "Refusing to run: not the test 
 @pytest.fixture(scope="session", autouse=True)
 def create_schema():
     Base.metadata.create_all(engine)
+    install_audit_triggers(engine)
 
 
 @pytest.fixture(autouse=True)
