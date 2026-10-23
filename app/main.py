@@ -6,10 +6,11 @@ from sqlalchemy.orm import Session
 from app.auth import DUMMY_HASH, create_token, get_current_user, verify_password
 from app.db import get_db
 from app.models import User
-from app.routes import documents
+from app.routes import documents, grants
 
 app = FastAPI(title="TrustVault")
 app.include_router(documents.router)
+app.include_router(grants.router)
 
 
 class LoginIn(BaseModel):
