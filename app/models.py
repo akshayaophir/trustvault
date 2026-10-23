@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey,
-    Integer, String, UniqueConstraint,
+    Integer, LargeBinary, String, UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -80,3 +80,10 @@ class AuditLog(Base):
     detail: Mapped[dict | None] = mapped_column(JSONB)
     prev_hash: Mapped[str | None] = mapped_column(String(64))
     hash: Mapped[str] = mapped_column(String(64))
+
+class DocumentBlob(Base):
+     __tablename__ = "document_blobs"
+
+     id: Mapped[int] = mapped_column(primary_key=True)
+     document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), unique=True)
+     data: Mapped[bytes] = mapped_column(LargeBinary)

@@ -3,13 +3,13 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import (
-    DUMMY_HASH, create_token, get_current_user, verify_password,
-)
+from app.auth import DUMMY_HASH, create_token, get_current_user, verify_password
 from app.db import get_db
 from app.models import User
+from app.routes import documents
 
 app = FastAPI(title="TrustVault")
+app.include_router(documents.router)
 
 
 class LoginIn(BaseModel):

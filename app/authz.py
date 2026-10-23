@@ -33,11 +33,13 @@ def is_allowed(db: Session, user: User, doc: Document | None, action: str) -> bo
     return grant is not None and grant.permission in ALLOWED_PERMISSIONS[action]
 
 
-def authorize(db: Session, user: User, doc_id: int, action: str) -> Document:
+def authorize(
+    db: Session, user: User, doc_id: int, action: str, label: str | None = None
+) -> Document:
     """The ONLY place that decides document access. Every document route calls it."""
     doc = db.get(Document, doc_id)
     if not is_allowed(db, user, doc, action):
-        audit.log(db, user, action, "denied", document_id=doc_id)
+        audit.log(db, user, label or action, "denied", document_id=doc_id)
         db.commit()  # keep the record of the refused attempt
         raise HTTPException(status_code=404, detail="Not found")
     return doc
