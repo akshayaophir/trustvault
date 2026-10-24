@@ -43,7 +43,7 @@ const NAV = {
 const DEMO = [["Admin", "admin@trustvault.test"], ["Owner", "owner1@trustvault.test"],
               ["Second owner", "owner2@trustvault.test"], ["Viewer", "viewer@trustvault.test"]];
 
-const state = { token: sessionStorage.getItem("tv_token"), me: null, tab: null, filters: {}, auditFilters: {}, alerts: 0 };
+const state = { token: sessionStorage.getItem("tv_token"), me: null, tab: null, filters: {}, alerts: 0 };
 const $ = (id) => document.getElementById(id);
 
 /* ---------- helpers ---------- */
@@ -464,50 +464,172 @@ async function renderUpload(view) {
   view.replaceChildren(form);
 }
 
-/* ---------- admin ---------- */
+/* ---------- activity (admin) ---------- */
 
-function detailText(r) {
-  if (!r.detail || r.action.startsWith("login")) return "-";
-  const text = JSON.stringify(r.detail);
-  return text.length > 70 ? text.slice(0, 70) + "..." : text;
+const ACTIONS = {
+  login: ["Signed in", "lock"],
+  login_locked: ["Sign-in blocked", "alert"],
+  upload: ["Uploaded", "upload"],
+  download: ["Downloaded", "download"],
+  view: ["Viewed details", "eye"],
+  update: ["Edited details", "pencil"],
+  replace: ["Replaced contents", "refresh"],
+  delete: ["Deleted", "trash"],
+  grant: ["Gave access", "userplus"],
+  revoke: ["Took back access", "x"],
+  list_grants: ["Viewed who has access", "users"],
+  deactivate_user: ["Disabled account", "x"],
+  activate_user: ["Enabled account", "check"],
+};
+
+const CATEGORIES = [
+  ["all", "All", () => true],
+  ["denied", "Refused", (r) => r.outcome === "denied"],
+  ["documents", "Documents", (r) => ["upload", "download", "view", "update", "replace", "delete", "list_grants"].includes(r.action)],
+  ["permissions", "Permission changes", (r) => ["grant", "revoke", "deactivate_user", "activate_user"].includes(r.action)],
+  ["signins", "Sign-ins", (r) => r.action === "login" || r.action === "login_locked"],
+];
+
+const act = { rows: [], cat: "all", q: "", action: "", shown: [] };
+
+function actionLabel(r) {
+  if (r.action === "login" && r.outcome === "denied") return "Failed sign-in";
+  return (ACTIONS[r.action] || [r.action])[0];
+}
+const actionIcon = (r) => (ACTIONS[r.action] || [null, "activity"])[1];
+
+function dayLabel(iso) {
+  const d = new Date(iso);
+  const start = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((start(new Date()) - start(d)) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+}
+
+function matchesText(r) {
+  if (act.action && r.action !== act.action) return false;
+  const q = act.q.trim().toLowerCase();
+  if (!q) return true;
+  const hay = [r.actor, r.target, r.action, actionLabel(r),
+    r.document_id ? "#" + r.document_id : "", r.detail && r.detail.name].join(" ").toLowerCase();
+  return hay.includes(q);
+}
+
+function openEvent(r) {
+  const dlg = $("dialog");
+  const row = (k, v) => [el("dt", {}, k), el("dd", {}, v)];
+  dlg.replaceChildren(
+    el("div", { class: "dialog-head" }, el("h3", {}, "Event #" + r.id),
+      el("button", { class: "icon-btn", "aria-label": "Close", onclick: () => dlg.close() }, icon("x"))),
+    el("dl", { class: "kv" },
+      ...row("When", full(r.time)),
+      ...row("Who", r.actor || "Unknown or not signed in"),
+      ...row("Action", actionLabel(r) + " (" + r.action + ")"),
+      ...row("Result", pill(r.outcome === "denied" ? "refused" : "allowed", r.outcome)),
+      ...row("Document", r.document_id ? "#" + r.document_id : "None"),
+      ...row("Target person", r.target || "None"),
+      ...row("Details", r.detail ? el("pre", { class: "detail" }, JSON.stringify(r.detail, null, 2)) : "None")));
+  dlg.showModal();
+}
+
+function eventRow(r) {
+  const open = () => openEvent(r);
+  const tr = el("tr", { class: "event" + (r.outcome === "denied" ? " refused" : ""), tabindex: "0", onclick: open },
+    el("td", { title: full(r.time) }, new Date(r.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })),
+    el("td", {}, r.actor ? person(r.actor) : el("span", { class: "muted" }, "Not signed in")),
+    el("td", {}, el("div", { class: "act" }, icon(actionIcon(r)), actionLabel(r))),
+    el("td", {}, pill(r.outcome === "denied" ? "refused" : "allowed", r.outcome)),
+    el("td", {}, r.document_id ? el("span", { class: "chip" }, "#" + r.document_id) : "-",
+      r.detail && r.detail.name ? " " + r.detail.name : ""),
+    el("td", {}, r.target || "-"));
+  tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+  return tr;
+}
+
+/* A cell starting with = + - or @ could run as a formula in a spreadsheet, so it is defused. */
+function csvCell(v) {
+  let s = v === null || v === undefined ? "" : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return '"' + s.replaceAll('"', '""') + '"';
+}
+
+function exportCsv(rows) {
+  const head = ["id", "time", "actor", "action", "result", "document_id", "target", "detail"];
+  const lines = [head.join(",")].concat(rows.map((r) =>
+    [r.id, r.time, r.actor, r.action, r.outcome, r.document_id, r.target, r.detail ? JSON.stringify(r.detail) : ""]
+      .map(csvCell).join(",")));
+  const url = URL.createObjectURL(new Blob([lines.join("\r\n")], { type: "text/csv" }));
+  const link = el("a", { href: url, download: "trustvault-activity.csv" });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function paintActivity(parts) {
+  const { statsBox, catsBox, bodyBox } = parts;
+  const rows = act.rows;
+  const refused = rows.filter((r) => r.outcome === "denied").length;
+  const downloads = rows.filter((r) => r.action === "download" && r.outcome === "allowed").length;
+  const people = new Set(rows.map((r) => r.actor).filter(Boolean)).size;
+  const card = (label, value, hint, warn) => el("div", { class: "stat" + (warn ? " warn" : "") },
+    el("div", { class: "stat-label" }, label), el("div", { class: "stat-value" }, value),
+    hint ? el("div", { class: "stat-hint" }, hint) : null);
+  statsBox.replaceChildren(
+    card("Events", rows.length, rows.length >= 500 ? "Newest 500 shown" : "In the audit log"),
+    card("Refused", refused, rows.length ? Math.round((refused / rows.length) * 100) + "% of events" : "", refused > 0),
+    card("Downloads", downloads, "Files opened"),
+    card("People", people, "Active accounts"));
+
+  const base = rows.filter(matchesText);
+  catsBox.replaceChildren(...CATEGORIES.map(([key, label, test]) =>
+    el("button", { class: "seg-btn" + (act.cat === key ? " on" : ""),
+        onclick: () => { act.cat = key; paintActivity(parts); } },
+      label, el("span", { class: "count" }, base.filter(test).length))));
+
+  const test = CATEGORIES.find(([key]) => key === act.cat)[2];
+  act.shown = base.filter(test);
+  if (!act.shown.length) {
+    bodyBox.replaceChildren(emptyState("activity", "No events match", "Try another category or clear the search."));
+    return;
+  }
+  let lastDay = "";
+  const trs = [];
+  for (const r of act.shown) {
+    const day = dayLabel(r.time);
+    if (day !== lastDay) {
+      trs.push(el("tr", { class: "day-row" }, el("td", { colspan: "6" }, day)));
+      lastDay = day;
+    }
+    trs.push(eventRow(r));
+  }
+  bodyBox.replaceChildren(
+    table(["Time", "Who", "Action", "Result", "Document", "Target"], trs),
+    el("p", { class: "muted small note" }, "Select a row for the full details of an event."));
 }
 
 async function renderActivity(view) {
-  const f = state.auditFilters;
-  const seg = el("div", { class: "seg" },
-    el("button", { class: "seg-btn" + (f.permissions ? "" : " on"), onclick: () => { state.auditFilters = {}; show("activity"); } }, "All activity"),
-    el("button", { class: "seg-btn" + (f.permissions ? " on" : ""), onclick: () => { state.auditFilters = { permissions: true }; show("activity"); } }, "Permission changes"));
-  let form = null;
-  if (!f.permissions) {
-    const actions = ["", "login", "login_locked", "upload", "download", "view", "update", "replace", "delete",
-      "grant", "revoke", "list_grants", "deactivate_user", "activate_user"];
-    const choose = (name, label, options, current) => el("label", {}, label,
-      el("select", { name }, options.map((o) =>
-        el("option", { value: o, selected: o === (current || "") ? "selected" : false }, o || "any"))));
-    form = el("form", { class: "toolbar" },
-      choose("action", "Action", actions, f.action), choose("outcome", "Result", ["", "allowed", "denied"], f.outcome),
-      field("document_id", "Document id", "number", f.document_id),
-      el("button", { class: "btn", type: "submit" }, "Filter"));
-    form.addEventListener("submit", (e) => {
-      e.preventDefault();
-      state.auditFilters = Object.fromEntries([...new FormData(form).entries()].filter(([, v]) => v));
-      show("activity");
-    });
-  }
-  const { permissions, ...rest } = f;
-  const rows = await api(permissions ? "/admin/permission-changes" : "/admin/audit" + qs(rest));
-  const body = rows.length
-    ? table(["When", "Who", "Action", "Result", "Document", "Target", "Details"], rows.map((r) => el("tr", {},
-        el("td", { title: full(r.time) }, ago(r.time)),
-        el("td", {}, r.actor ? person(r.actor) : "unknown"),
-        el("td", {}, el("span", { class: "chip" }, r.action)),
-        el("td", {}, pill(r.outcome)),
-        el("td", {}, r.document_id || "-"),
-        el("td", {}, r.target || "-"),
-        el("td", { class: "muted" }, detailText(r)))))
-    : emptyState("activity", "No activity matches", "Try different filters.");
-  view.replaceChildren(seg, form, body);
+  act.rows = await api("/admin/audit?limit=500");
+  const parts = { statsBox: el("div", { class: "stats" }), catsBox: el("div", { class: "seg" }), bodyBox: el("div", {}) };
+  const search = el("input", { type: "search", value: act.q, "aria-label": "Search activity",
+    placeholder: "Search by person, action or #document" });
+  search.addEventListener("input", () => { act.q = search.value; paintActivity(parts); });
+  const select = el("select", { "aria-label": "Filter by action" },
+    el("option", { value: "" }, "All actions"),
+    ...Object.entries(ACTIONS).map(([key, [label]]) =>
+      el("option", { value: key, selected: key === act.action ? "selected" : false }, label)));
+  select.addEventListener("change", () => { act.action = select.value; paintActivity(parts); });
+  $("page-actions").replaceChildren(
+    el("button", { class: "btn ghost", onclick: () => show("activity") }, icon("refresh"), "Refresh"),
+    el("button", { class: "btn ghost", onclick: () => exportCsv(act.shown) }, icon("download"), "Export CSV"));
+  view.replaceChildren(parts.statsBox, parts.catsBox,
+    el("div", { class: "toolbar" }, el("label", { class: "search" }, icon("search"), search), select),
+    parts.bodyBox);
+  paintActivity(parts);
 }
+
+/* ---------- alerts, users, integrity (admin) ---------- */
 
 async function renderAlerts(view) {
   const list = await api("/admin/alerts");
