@@ -3,31 +3,71 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TrustVault</title>
+  <meta name="color-scheme" content="light dark">
+  <title>TrustVault: secure document sharing</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234338ca' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/%3E%3Cpath d='M9 12l2 2 4-4'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <header class="top">
-    <div class="brand">TrustVault</div>
-    <div id="who" class="who hidden"></div>
-  </header>
-  <main>
-    <section id="login" class="card narrow">
-      <h1>Sign in</h1>
-      <p class="muted">Secure document sharing with a provable audit trail.</p>
-      <form id="login-form">
-        <label>Email<input id="email" type="email" required autocomplete="username"></label>
-        <label>Password<input id="password" type="password" required autocomplete="current-password"></label>
-        <button type="submit">Sign in</button>
-        <p id="login-msg" class="msg error" role="alert"></p>
-      </form>
+  <div id="login-screen" class="auth">
+    <aside class="auth-brand">
+      <div class="brand-row"><span class="logo" data-icon="shield"></span><span>TrustVault</span></div>
+      <div>
+        <h1>Share confidential documents.<br>Prove who opened them.</h1>
+        <ul class="points">
+          <li data-icon="lock"><span><strong>Only the people you choose</strong> can open a file. The server checks every request.</span></li>
+          <li data-icon="zap"><span><strong>Taking access away is instant.</strong> The very next request is refused.</span></li>
+          <li data-icon="activity"><span><strong>Every attempt is recorded</strong>, including refused ones, in a tamper-evident log.</span></li>
+        </ul>
+      </div>
+      <p class="small brand-foot">Demo environment. Use the accounts listed in the README.</p>
+    </aside>
+
+    <section class="auth-form">
+      <div class="auth-card">
+        <h2>Welcome back</h2>
+        <p class="muted">Sign in to your workspace.</p>
+        <form id="login-form" novalidate>
+          <label>Email
+            <input id="email" type="email" required autocomplete="username" placeholder="you@company.com">
+          </label>
+          <label>Password
+            <span class="pw">
+              <input id="password" type="password" required autocomplete="current-password" placeholder="Your password">
+              <button id="pw-toggle" type="button" class="icon-btn" aria-label="Show password" title="Show password"></button>
+            </span>
+          </label>
+          <p id="login-msg" class="form-error" role="alert"></p>
+          <button id="login-btn" type="submit" class="btn wide">Sign in</button>
+        </form>
+        <div class="demo">
+          <span class="small muted">Demo accounts (click to fill the email)</span>
+          <div id="demo-chips" class="chips"></div>
+        </div>
+      </div>
     </section>
-    <section id="app" class="hidden">
-      <nav id="tabs" class="tabs"></nav>
-      <p id="msg" class="msg" role="status"></p>
+  </div>
+
+  <div id="shell" class="shell hidden">
+    <aside class="sidebar">
+      <div class="brand-row side-brand"><span class="logo" data-icon="shield"></span><span>TrustVault</span></div>
+      <nav id="nav" class="nav" aria-label="Main"></nav>
+      <div id="side-foot" class="side-foot"></div>
+    </aside>
+    <div class="content">
+      <header class="page-head">
+        <div>
+          <h1 id="page-title"></h1>
+          <p id="page-sub" class="muted"></p>
+        </div>
+        <div id="page-actions" class="page-actions"></div>
+      </header>
       <div id="view"></div>
-    </section>
-  </main>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <dialog id="dialog" class="dialog"></dialog>
   <script src="/static/app.js"></script>
 </body>
 </html>
