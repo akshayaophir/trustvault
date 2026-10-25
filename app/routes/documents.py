@@ -188,6 +188,75 @@ def list_documents(
 
 
 @router.get("/{doc_id}")
+
+@router.get("/catalogue")
+def document_catalogue(
+    q: str | None = Query(default=None, max_length=100),
+    category: str | None = Query(default=None, max_length=100),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List active document metadata without exposing document contents."""
+    stmt = (
+        select(Document, User.email)
+        .join(User, User.id == Document.owner_id)
+        .where(Document.deleted_at.is_(None))
+    )
+
+    if q:
+        stmt = stmt.where(
+            Document.name.ilike(like(q), escape="\\")
+        )
+
+    if category:
+        stmt = stmt.where(
+            Document.category.ilike(like(category), escape="\\")
+        )
+
+    rows = db.execute(
+        stmt.order_by(Document.created_at.desc())
+    ).all()
+
+    if not rows:
+        return []
+
+    document_ids = [doc.id for doc, _ in rows]
+
+    active_grants = db.execute(
+        select(Grant.document_id, Grant.permission).where(
+            Grant.user_id == user.id,
+            Grant.document_id.in_(document_ids),
+            Grant.revoked_at.is_(None),
+        )
+    ).all()
+
+    permissions = {
+        document_id: permission
+        for document_id, permission in active_grants
+    }
+
+    result = []
+
+    for doc, owner_email in rows:
+        if doc.owner_id == user.id:
+            permission = "owner"
+        elif user.role == "admin":
+            permission = "admin_readonly"
+        else:
+            permission = permissions.get(doc.id, "none")
+
+        result.append({
+            **view(doc),
+            "owner_email": owner_email,
+            "my_permission": permission,
+            "can_request_access": (
+                doc.owner_id != user.id
+                and permission not in ("edit", "admin_readonly")
+            ),
+        })
+
+    return result
+
 def get_document(
     doc_id: int,
     user: User = Depends(get_current_user),
