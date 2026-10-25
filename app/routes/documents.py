@@ -1,3 +1,4 @@
+
 import hashlib
 from datetime import date, datetime, time, timedelta, timezone
 
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 
 class DocumentPatch(BaseModel):
-    model_config = {"extra": "forbid"}  # unknown fields such as owner_id are rejected
+    model_config = {"extra": "forbid"}
     name: str | None = Field(default=None, min_length=1, max_length=150)
     category: str | None = Field(default=None, max_length=100)
 
@@ -43,7 +44,7 @@ def like(text: str) -> str:
 
 
 def visible_documents(user: User):
-    """Documents this user may see: their own, or actively granted. Never deleted ones."""
+    """Return the user's own documents and actively granted documents."""
     return (
         select(Document, Grant.permission)
         .outerjoin(
@@ -67,10 +68,17 @@ async def upload(
     db: Session = Depends(get_db),
 ):
     data = await file.read(MAX_BYTES + 1)
+
     try:
         name, mime = validate_upload(file.filename or "", data)
     except UploadError as e:
-        audit.log(db, user, "upload", "denied", detail={"reason": e.message})
+        audit.log(
+            db,
+            user,
+            "upload",
+            "denied",
+            detail={"reason": e.message},
+        )
         db.commit()
         raise HTTPException(status_code=e.status, detail=e.message)
 
@@ -82,13 +90,25 @@ async def upload(
         size=len(data),
         sha256=hashlib.sha256(data).hexdigest(),
     )
+
     db.add(doc)
     db.flush()
+
     db.add(DocumentBlob(document_id=doc.id, data=data))
-    audit.log(db, user, "upload", "allowed", document_id=doc.id,
-              detail={"name": name, "size": len(data)})
-    db.commit()  # the document, its content and the audit row are saved together
+
+    audit.log(
+        db,
+        user,
+        "upload",
+        "allowed",
+        document_id=doc.id,
+        detail={"name": name, "size": len(data)},
+    )
+
+    # Save document, content, and audit entry together.
+    db.commit()
     db.refresh(doc)
+
     return view(doc)
 
 
@@ -102,52 +122,119 @@ def list_documents(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    stmt = visible_documents(user)  # the permission filter comes first, always
+    # Apply permission filtering before other search filters.
+    stmt = visible_documents(user)
+
     if q:
-        stmt = stmt.where(Document.name.ilike(like(q), escape="\\"))
+        stmt = stmt.where(
+            Document.name.ilike(like(q), escape="\\")
+        )
+
     if category:
-        stmt = stmt.where(Document.category.ilike(like(category), escape="\\"))
+        stmt = stmt.where(
+            Document.category.ilike(like(category), escape="\\")
+        )
+
     if owner:
-        stmt = stmt.where(Document.owner_id.in_(
-            select(User.id).where(User.email.ilike(like(owner), escape="\\"))))
+        stmt = stmt.where(
+            Document.owner_id.in_(
+                select(User.id).where(
+                    User.email.ilike(like(owner), escape="\\")
+                )
+            )
+        )
+
     if created_from:
-        start = datetime.combine(created_from, time.min, tzinfo=timezone.utc)
+        start = datetime.combine(
+            created_from,
+            time.min,
+            tzinfo=timezone.utc,
+        )
         stmt = stmt.where(Document.created_at >= start)
+
     if created_to:
-        end = datetime.combine(created_to + timedelta(days=1), time.min, tzinfo=timezone.utc)
+        end = datetime.combine(
+            created_to + timedelta(days=1),
+            time.min,
+            tzinfo=timezone.utc,
+        )
         stmt = stmt.where(Document.created_at < end)
-    rows = db.execute(stmt.order_by(Document.created_at.desc())).all()
+
+    rows = db.execute(
+        stmt.order_by(Document.created_at.desc())
+    ).all()
+
     emails = {}
+
     if rows:
-        emails = dict(db.execute(
-            select(User.id, User.email).where(User.id.in_({d.owner_id for d, _ in rows}))
-        ).all())
+        emails = dict(
+            db.execute(
+                select(User.id, User.email).where(
+                    User.id.in_({doc.owner_id for doc, _ in rows})
+                )
+            ).all()
+        )
+
     return [
-        {**view(d), "owner_email": emails.get(d.owner_id),
-         "my_permission": "owner" if d.owner_id == user.id else p}
-        for d, p in rows
+        {
+            **view(doc),
+            "owner_email": emails.get(doc.owner_id),
+            "my_permission": (
+                "owner" if doc.owner_id == user.id else permission
+            ),
+        }
+        for doc, permission in rows
     ]
 
 
 @router.get("/{doc_id}")
-def get_document(doc_id: int, user: User = Depends(get_current_user),
-                 db: Session = Depends(get_db)):
+def get_document(
+    doc_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     doc = authorize(db, user, doc_id, "read", label="view")
-    audit.log(db, user, "view", "allowed", document_id=doc.id)
+
+    audit.log(
+        db,
+        user,
+        "view",
+        "allowed",
+        document_id=doc.id,
+    )
+
     db.commit()
     return view(doc)
 
 
 @router.get("/{doc_id}/download")
-def download(doc_id: int, user: User = Depends(get_current_user),
-             db: Session = Depends(get_db)):
+def download(
+    doc_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     doc = authorize(db, user, doc_id, "read", label="download")
-    blob = db.scalar(select(DocumentBlob).where(DocumentBlob.document_id == doc.id))
+
+    blob = db.scalar(
+        select(DocumentBlob).where(
+            DocumentBlob.document_id == doc.id
+        )
+    )
+
     if blob is None:
         raise HTTPException(status_code=404, detail="Not found")
-    audit.log(db, user, "download", "allowed", document_id=doc.id,
-              detail={"name": doc.name})
+
+    audit.log(
+        db,
+        user,
+        "download",
+        "allowed",
+        document_id=doc.id,
+        detail={"name": doc.name},
+    )
+
     db.commit()
+
     return Response(
         content=blob.data,
         media_type=doc.mime,
@@ -160,30 +247,139 @@ def download(doc_id: int, user: User = Depends(get_current_user),
 
 
 @router.patch("/{doc_id}")
-def update_document(doc_id: int, body: DocumentPatch,
-                    user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def update_document(
+    doc_id: int,
+    body: DocumentPatch,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     doc = authorize(db, user, doc_id, "edit", label="update")
     changes = {}
+
     if body.name is not None:
         name = clean_name(body.name)
+
         if not name:
-            raise HTTPException(status_code=422, detail="Invalid name")
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid name",
+            )
+
+        # A document's file extension cannot be changed.
+        if (
+            name.rsplit(".", 1)[-1].lower()
+            != doc.name.rsplit(".", 1)[-1].lower()
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="The file type cannot be changed",
+            )
+
         doc.name = name
         changes["name"] = name
+
     if body.category is not None:
         doc.category = body.category or None
         changes["category"] = doc.category
-    audit.log(db, user, "update", "allowed", document_id=doc.id, detail=changes)
+
+    audit.log(
+        db,
+        user,
+        "update",
+        "allowed",
+        document_id=doc.id,
+        detail=changes,
+    )
+
     db.commit()
     db.refresh(doc)
+
+    return view(doc)
+
+
+@router.put("/{doc_id}/content")
+async def replace_content(
+    doc_id: int,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    doc = authorize(db, user, doc_id, "edit", label="replace")
+
+    data = await file.read(MAX_BYTES + 1)
+
+    try:
+        # Validate replacement content against the existing file name.
+        validate_upload(doc.name, data)
+
+    except UploadError as e:
+        audit.log(
+            db,
+            user,
+            "replace",
+            "denied",
+            document_id=doc.id,
+            detail={"reason": e.message},
+        )
+
+        db.commit()
+
+        raise HTTPException(
+            status_code=e.status,
+            detail=e.message,
+        )
+
+    blob = db.scalar(
+        select(DocumentBlob).where(
+            DocumentBlob.document_id == doc.id
+        )
+    )
+
+    if blob is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    blob.data = data
+    doc.size = len(data)
+    doc.sha256 = hashlib.sha256(data).hexdigest()
+
+    audit.log(
+        db,
+        user,
+        "replace",
+        "allowed",
+        document_id=doc.id,
+        detail={
+            "name": doc.name,
+            "size": len(data),
+            "sha256": doc.sha256,
+        },
+    )
+
+    db.commit()
+    db.refresh(doc)
+
     return view(doc)
 
 
 @router.delete("/{doc_id}", status_code=204)
-def delete_document(doc_id: int, user: User = Depends(get_current_user),
-                    db: Session = Depends(get_db)):
+def delete_document(
+    doc_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     doc = authorize(db, user, doc_id, "delete")
-    doc.deleted_at = now()  # soft delete: the record and audit history stay
-    audit.log(db, user, "delete", "allowed", document_id=doc.id)
+
+    # Soft delete: preserve the document record and audit history.
+    doc.deleted_at = now()
+
+    audit.log(
+        db,
+        user,
+        "delete",
+        "allowed",
+        document_id=doc.id,
+    )
+
     db.commit()
+
     return Response(status_code=204)
