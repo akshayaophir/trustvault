@@ -50,11 +50,44 @@ ROUTES = [
 ]
 
 
-@pytest.mark.parametrize("who", ["stranger", "other", "admin"])
+
+@pytest.mark.parametrize("who", ["stranger", "other"])
 @pytest.mark.parametrize("method,path,body", ROUTES)
 def test_user_without_grant_gets_404(world, who, method, path, body):
-    r = client.request(method, path.format(id=world.doc.id), headers=world.h[who], json=body)
+    r = client.request(
+        method,
+        path.format(id=world.doc.id),
+        headers=world.h[who],
+        json=body,
+    )
     assert r.status_code == 404
+
+
+def test_admin_can_read_and_download_but_not_modify(world):
+    headers = world.h["admin"]
+    doc_id = world.doc.id
+
+    # Admins can view and download active documents without a grant.
+    assert client.get(
+        f"/documents/{doc_id}", headers=headers
+    ).status_code == 200
+
+    download_response = client.get(
+        f"/documents/{doc_id}/download", headers=headers
+    )
+    assert download_response.status_code == 200
+    assert download_response.content == PDF
+
+    # Admins cannot edit or delete documents they do not own.
+    assert client.patch(
+        f"/documents/{doc_id}",
+        headers=headers,
+        json={"name": "changed.pdf"},
+    ).status_code == 404
+
+    assert client.delete(
+        f"/documents/{doc_id}", headers=headers
+    ).status_code == 404
 
 
 @pytest.mark.parametrize("method,path,body", ROUTES)
