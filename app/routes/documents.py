@@ -187,7 +187,6 @@ def list_documents(
     ]
 
 
-@router.get("/{doc_id}")
 
 @router.get("/catalogue")
 def document_catalogue(
@@ -256,7 +255,13 @@ def document_catalogue(
         })
 
     return result
-
+@router.get("/{doc_id}")
+def get_document(
+    doc_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    doc = authorize(db, user, doc_id, "read", label="view")
 def get_document(
     doc_id: int,
     user: User = Depends(get_current_user),
