@@ -1,10 +1,10 @@
 import uuid
 from datetime import datetime, timezone
-
 from sqlalchemy import (
     BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey,
     Integer, LargeBinary, String, UniqueConstraint,
 )
+
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -87,3 +87,36 @@ class DocumentBlob(Base):
      id: Mapped[int] = mapped_column(primary_key=True)
      document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), unique=True)
      data: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+class AccessRequest(Base):
+    __tablename__ = "access_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "permission IN ('read','edit')",
+            name="access_requests_permission_check",
+        ),
+        CheckConstraint(
+            "status IN ('pending','approved','rejected')",
+            name="access_requests_status_check",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id")
+    )
+    requester_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id")
+    )
+    permission: Mapped[str] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(10), default="pending")
+    decided_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

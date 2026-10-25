@@ -8,12 +8,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-
+from app.routes import access_requests, admin, documents, grants
 from app import audit
 from app.auth import DUMMY_HASH, create_token, get_current_user, verify_password
 from app.db import get_db
 from app.models import AuditLog, User, now
-from app.routes import admin, documents, grants
 
 STATIC = Path(__file__).parent / "static"
 LOCK_AFTER = 5                   # failed logins before the account is locked
@@ -25,6 +24,7 @@ app = FastAPI(title="TrustVault")
 app.include_router(documents.router)
 app.include_router(grants.router)
 app.include_router(admin.router)
+app.include_router(access_requests.router)
 if STATIC.is_dir():
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 

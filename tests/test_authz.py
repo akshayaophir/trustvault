@@ -16,11 +16,18 @@ ALLOWED = [
     ("editor", "read"), ("editor", "edit"),
 ]
 
+
 DENIED = (
-    [(who, a) for who in ("stranger", "other_owner", "admin", "revoked") for a in ACTIONS]
+    [
+        (who, a)
+        for who in ("stranger", "other_owner", "revoked")
+        for a in ACTIONS
+    ]
+    + [("admin", a) for a in ("edit", "delete", "share")]
     + [("reader", "edit"), ("reader", "delete"), ("reader", "share")]
     + [("editor", "delete"), ("editor", "share")]
 )
+
 
 
 @pytest.fixture
@@ -96,3 +103,7 @@ def test_inactive_user_is_denied(db, world):
 def test_unknown_action_is_denied_even_for_owner(db, world):
     with pytest.raises(HTTPException):
         authorize(db, world.owner, world.doc.id, "teleport")
+
+def test_admin_can_read_active_document(db, world):
+    doc = authorize(db, world.admin, world.doc.id, "read")
+    assert doc.id == world.doc.id

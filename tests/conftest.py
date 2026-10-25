@@ -31,7 +31,10 @@ def create_schema():
 def clean_db():
     with engine.begin() as conn:
         conn.execute(
-            text("TRUNCATE audit_log, grants, documents, users RESTART IDENTITY CASCADE")
+            text(
+    "TRUNCATE access_requests, audit_log, grants, documents, users "
+    "RESTART IDENTITY CASCADE"
+)
         )
 
 
