@@ -29,10 +29,19 @@ const ICONS = {
 const NAV = {
   owner: [
     ["documents", "Documents", "files", "Documents you own or that were shared with you"],
+    ["catalogue", "Document Catalogue", "search", "Find documents and request access"],
     ["upload", "Upload", "upload", "Add a new document"],
+    ["myRequests", "My Requests", "clock", "Track your access requests"],
+    ["incomingRequests", "Incoming Requests", "users", "Review requests for your documents"],
   ],
-  viewer: [["documents", "Shared with me", "files", "Documents other people have shared with you"]],
+  viewer: [
+    ["documents", "Shared with me", "files", "Documents other people have shared with you"],
+    ["catalogue", "Document Catalogue", "search", "Find documents and request access"],
+    ["myRequests", "My Requests", "clock", "Track your access requests"],
+  ],
   admin: [
+    ["catalogue", "Document Catalogue", "search", "Find documents and request access"],
+    ["myRequests", "My Requests", "clock", "Track your access requests"],
     ["activity", "Activity", "activity", "Every action, including refused attempts"],
     ["alerts", "Alerts", "bell", "Unusual behaviour worth a look"],
     ["users", "Users", "users", "Accounts and their access"],
@@ -683,9 +692,257 @@ async function renderIntegrity(view) {
   run();
 }
 
+
+/* ---------- document catalogue ---------- */
+
+async function renderCatalogue(view) {
+  const search = el("input", {
+    type: "search",
+    placeholder: "Search documents...",
+    "aria-label": "Search documents"
+  });
+  const category = el("input", {
+    type: "text",
+    placeholder: "Filter by category",
+    "aria-label": "Filter by category"
+  });
+  const results = el("div", {});
+  const status = el("p", { class: "muted small" }, "");
+
+  async function load() {
+    results.replaceChildren(el("p", { class: "muted" }, "Loading documents..."));
+    try {
+      const params = new URLSearchParams();
+      if (search.value.trim()) params.set("q", search.value.trim());
+      if (category.value.trim()) params.set("category", category.value.trim());
+
+      const docs = await api("/documents/catalogue?" + params.toString());
+      const items = Array.isArray(docs) ? docs : (docs.items || []);
+      status.textContent = items.length + " document(s) found";
+
+      if (!items.length) {
+        results.replaceChildren(
+          emptyState("search", "No documents found", "Try another search or category.")
+        );
+        return;
+      }
+
+      results.replaceChildren(table(
+        ["Document", "Category", "Owner", "Permission", "Request access"],
+        items.map((d) => {
+          const name = d.name || d.title || d.filename || ("Document #" + d.id);
+          const permission = d.my_permission || "none";
+          const canRequest = d.can_request_access === true;
+
+          return el("tr", {},
+            el("td", {}, name),
+            el("td", {}, d.category || "-"),
+            el("td", {}, d.owner_email || "-"),
+            el("td", {}, pill(permission.replaceAll("_", " "))),
+            el("td", { class: "actions" },
+              canRequest
+                ? el("div", { class: "actions" },
+                    el("button", {
+                      class: "btn sm",
+                      onclick: () => requestAccess(d.id, "read")
+                    }, "Request read"),
+                    el("button", {
+                      class: "btn sm ghost",
+                      onclick: () => requestAccess(d.id, "edit")
+                    }, "Request edit"))
+                : el("span", { class: "muted small" },
+                    permission === "owner" ? "Your document" :
+                    permission === "edit" ? "Already has edit access" :
+                    permission === "read" ? "Already has read access" :
+                    "Unavailable"))
+          );
+        })
+      ));
+    } catch (err) {
+      results.replaceChildren(
+        emptyState("alert", "Catalogue unavailable", friendly(err))
+      );
+    }
+  }
+
+  async function requestAccess(docId, permission) {
+    if (!(await ask(
+      "Request " + permission + " access",
+      "Send a request for " + permission + " access to document #" + docId + "?",
+      "Send request"
+    ))) return;
+
+    try {
+      await api("/documents/" + docId + "/access-requests", {
+        method: "POST",
+        json: { permission }
+      });
+      toast("Access request submitted.", "success");
+      await load();
+    } catch (err) {
+      toast(friendly(err), "error");
+    }
+  }
+
+  const searchButton = el("button", {
+    class: "btn",
+    onclick: load
+  }, "Search");
+
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") load();
+  });
+  category.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") load();
+  });
+
+  $("page-actions").replaceChildren(
+    el("button", {
+      class: "btn ghost",
+      onclick: () => show("myRequests")
+    }, "My Requests")
+  );
+
+  view.replaceChildren(
+    el("div", { class: "toolbar" },
+      el("label", { class: "search" }, icon("search"), search),
+      category,
+      searchButton
+    ),
+    status,
+    results
+  );
+
+  await load();
+}
+
+/* ---------- my access requests ---------- */
+
+async function renderMyRequests(view) {
+  const items = await api("/access-requests/mine");
+
+  if (!items.length) {
+    view.replaceChildren(
+      emptyState("clock", "No access requests yet",
+        "Find documents in the catalogue and request access.")
+    );
+    return;
+  }
+
+  view.replaceChildren(table(
+    ["Request", "Document", "Permission", "Status", "Submitted", "Decision"],
+    items.map((r) => el("tr", {},
+      el("td", {}, "#" + r.id),
+      el("td", {}, "#" + r.document_id),
+      el("td", {}, r.permission),
+      el("td", {}, pill(r.status)),
+      el("td", {}, r.created_at
+        ? new Date(r.created_at).toLocaleString()
+        : "-"),
+      el("td", {}, r.decided_at
+        ? new Date(r.decided_at).toLocaleString()
+        : "-")
+    ))
+  ));
+
+  $("page-actions").replaceChildren(
+    el("button", {
+      class: "btn ghost",
+      onclick: () => show("catalogue")
+    }, "Browse Catalogue")
+  );
+}
+
+/* ---------- incoming requests for owned documents ---------- */
+
+async function renderIncomingRequests(view) {
+  const docs = await api("/documents");
+  const owned = (Array.isArray(docs) ? docs : (docs.items || []))
+    .filter((d) => d.owner_id === state.me.id);
+
+  const results = await Promise.all(
+    owned.map(async (d) => {
+      try {
+        const requests = await api("/documents/" + d.id + "/access-requests");
+        return requests.map((r) => ({
+          ...r,
+          document_name: d.name || d.title || d.filename || ("Document #" + d.id)
+        }));
+      } catch (err) {
+        console.error("Could not load requests for document", d.id, err);
+        return [];
+      }
+    })
+  );
+
+  const items = results.flat();
+
+  if (!items.length) {
+    view.replaceChildren(
+      emptyState("users", "No incoming requests",
+        "Requests for your documents will appear here.")
+    );
+    return;
+  }
+
+  view.replaceChildren(table(
+    ["Document", "Requester ID", "Permission", "Status", "Submitted", "Actions"],
+    items.map((r) => el("tr", {},
+      el("td", {}, r.document_name),
+      el("td", {}, "#" + r.requester_id),
+      el("td", {}, r.permission),
+      el("td", {}, pill(r.status)),
+      el("td", {}, r.created_at
+        ? new Date(r.created_at).toLocaleString()
+        : "-"),
+      el("td", { class: "actions" },
+        r.status === "pending"
+          ? el("div", { class: "actions" },
+              el("button", {
+                class: "btn sm",
+                onclick: () => decideRequest(r.id, "approve")
+              }, "Approve"),
+              el("button", {
+                class: "btn sm danger",
+                onclick: () => decideRequest(r.id, "reject")
+              }, "Reject"))
+          : "-")
+    ))
+  ));
+}
+
+async function decideRequest(requestId, decision) {
+  const confirmed = await ask(
+    decision === "approve" ? "Approve access" : "Reject access",
+    "Are you sure you want to " + decision + " this request?",
+    decision === "approve" ? "Approve" : "Reject",
+    decision === "reject"
+  );
+
+  if (!confirmed) return;
+
+  try {
+    await api("/access-requests/" + requestId + "/decision", {
+      method: "POST",
+      json: { decision }
+    });
+    toast("Request " + decision + "d.", "success");
+    show("incomingRequests");
+  } catch (err) {
+    toast(friendly(err), "error");
+  }
+}
+
 const VIEWS = {
-  documents: renderDocuments, upload: renderUpload,
-  activity: renderActivity, alerts: renderAlerts, users: renderUsers, integrity: renderIntegrity,
+  documents: renderDocuments,
+  catalogue: renderCatalogue,
+  upload: renderUpload,
+  myRequests: renderMyRequests,
+  incomingRequests: renderIncomingRequests,
+  activity: renderActivity,
+  alerts: renderAlerts,
+  users: renderUsers,
+  integrity: renderIntegrity,
 };
 
 /* ---------- start-up ---------- */
